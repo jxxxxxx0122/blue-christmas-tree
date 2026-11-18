@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#030814">
-<title>Blue Christmas Tree</title>
+<title>Merry Christmas · 蓝色圣诞树</title>
+<meta name="description" content="深蓝极光雪夜里的 3D 粒子圣诞树：拖动环视，点击飘雪。">
 <style>
   :root { color-scheme: dark; --bg: #030814; }
   * { box-sizing: border-box; }
@@ -48,11 +49,13 @@
   #cursor-glow.on { opacity: 1; }
   #hint {
     position: fixed;
-    left: 50%;
+    left: 0;
+    right: 0;
     bottom: max(18px, env(safe-area-inset-bottom));
     z-index: 3;
     margin: 0;
     padding: 0;
+    text-align: center;
     white-space: nowrap;
     font-family: "Avenir Next", "Century Gothic", "Optima", "Helvetica Neue", sans-serif;
     font-size: 11px;
@@ -60,16 +63,81 @@
     letter-spacing: 0.24em;
     color: rgba(205, 232, 255, 0.55);
     opacity: 0;
-    transform: translate(-50%, 8px);
+    transform: translateY(8px);
     transition: opacity 1s ease, transform 1s ease;
     pointer-events: none;
   }
-  #hint.visible { opacity: 1; transform: translate(-50%, 0); }
+  #hint.visible { opacity: 1; transform: translateY(0); }
   @media (pointer: coarse) {
     #cursor-glow { display: none; }
   }
   @media (prefers-reduced-motion: reduce) {
     #hint, #cursor-glow { transition: none; }
+  }
+
+  /* ── 排版 ─────────────────────────────────────────── */
+  #ui {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: clamp(58px, 8.5vh, 86px);
+    z-index: 3;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 0;
+    text-align: center;
+    pointer-events: none;
+    user-select: none;
+    color: #e2f4ff;
+    animation: uiIn 1.5s cubic-bezier(0.2, 0.7, 0.2, 1) 0.45s both;
+  }
+  #ui .rule {
+    width: 54px;
+    height: 1px;
+    margin: 0 auto 18px;
+    background: linear-gradient(90deg, transparent, rgba(160, 220, 255, 0.75), transparent);
+  }
+  #ui h1 {
+    margin: 0;
+    font-family: "Avenir Next", "Century Gothic", "Optima", "Helvetica Neue", sans-serif;
+    font-size: clamp(18px, 3.1vw, 38px);
+    font-weight: 300;
+    line-height: 1.2;
+    letter-spacing: 0.42em;
+    text-indent: 0.42em;
+    text-transform: uppercase;
+    color: rgba(226, 244, 255, 0.94);
+    text-shadow: 0 0 26px rgba(70, 150, 255, 0.35), 0 0 2px rgba(255, 255, 255, 0.5);
+    white-space: nowrap;
+  }
+  #ui .year {
+    margin: 14px 0 0;
+    font-family: "Avenir Next", "Century Gothic", "Optima", "Helvetica Neue", sans-serif;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.55em;
+    text-indent: 0.55em;
+    color: rgba(170, 210, 240, 0.45);
+  }
+  #stage { animation: canvasIn 1.6s ease 0.1s both; }
+  @keyframes uiIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes canvasIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @media (max-height: 520px) {
+    #ui { bottom: 16px; }
+    #ui .rule { display: none; }
+    #ui h1 { font-size: 14px; letter-spacing: 0.34em; text-indent: 0.34em; }
+    #ui .year { margin-top: 7px; font-size: 9px; }
+    #hint { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #ui, #stage { animation: none; }
   }
   #error {
     display: none;
@@ -95,8 +163,18 @@
 <body>
 <canvas id="stage" role="img" aria-label="蓝色粒子圣诞树，可拖动旋转"></canvas>
 <div id="cursor-glow" aria-hidden="true"></div>
+<main id="ui">
+  <div class="rule" aria-hidden="true"></div>
+  <h1>Merry Christmas</h1>
+  <p class="year">2026</p>
+</main>
 <p id="hint" aria-hidden="true">拖动旋转 · 点击飘雪</p>
 <pre id="error" aria-live="assertive"></pre>
+<noscript>
+  <p style="position:fixed;inset:0;display:grid;place-items:center;color:#cfe9ff;font-family:sans-serif;text-align:center;padding:24px;">
+    这棵圣诞树需要开启 JavaScript 才能生长。
+  </p>
+</noscript>
 
 <script src="vendor/three.min.js"></script>
 <script>
@@ -846,7 +924,7 @@
       }
     }
 
-    return { spawn, update };
+    return { spawn, update, activeCount() { return items.filter((it) => it.active).length; } };
   }
 
   // ── 泛光与最终合成 ──────────────────────────────────────
@@ -1212,7 +1290,7 @@
     const aspect = window.innerWidth / Math.max(1, window.innerHeight);
     const halfV = Math.tan(THREE.MathUtils.degToRad(CONFIG.camera.fov / 2));
     const fitW = (CONFIG.tree.radius * 1.16) / (halfV * aspect);
-    const radius = Math.max(40, fitW);
+    const radius = Math.max(40, fitW) + (aspect > 1.8 ? 5 : 0);
     const targetY = aspect < 0.8 ? -2.2 : -1.2;
     return { radius, targetY };
   }
@@ -1338,14 +1416,14 @@
     elapsed += dt;
 
     if (tree) {
-      tree.uniforms.uTime.value = elapsed;
+      tree.uniforms.uTime.value = reducedMotion ? 0 : elapsed;
       if (tree.uniforms.uRippleTime.value >= 0) {
         tree.uniforms.uRippleTime.value += dt;
         if (tree.uniforms.uRippleTime.value > 2.4) tree.uniforms.uRippleTime.value = -1;
       }
     }
-    if (ornaments) ornaments.update(elapsed, dt);
-    if (star) star.update(elapsed, dt);
+    if (ornaments) ornaments.update(reducedMotion ? 0 : elapsed, dt);
+    if (star) star.update(reducedMotion ? 0 : elapsed, dt);
     if (orbit) orbit.update(dt, performance.now());
     if (aurora) aurora.update(reducedMotion ? 0 : elapsed);
     if (stars) stars.update(reducedMotion ? 0 : elapsed);
@@ -1379,6 +1457,7 @@
     get star() { return star; },
     get orbit() { return orbit; },
     get snow() { return snow; },
+    get burst() { return burst; },
     get bloom() { return bloom; },
     get scene() { return scene; },
     get camera() { return camera; },
