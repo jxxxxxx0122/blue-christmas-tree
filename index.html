@@ -830,14 +830,12 @@
   function createBurst(scene) {
     const flakeTex = makeSnowflakeTexture();
     const glowTex = makeGlowTexture();
-    const total = CONFIG.burst.snowflakes + CONFIG.burst.sparks;
     const items = [];
 
-    for (let i = 0; i < total; i++) {
-      const isFlake = i < CONFIG.burst.snowflakes;
+    function makeItem(isFlake) {
       const mat = new THREE.SpriteMaterial({
         map: isFlake ? flakeTex : glowTex,
-        color: new THREE.Color(0xdfF6ff),
+        color: new THREE.Color(0xdff6ff),
         transparent: true,
         opacity: 0,
         depthWrite: false,
@@ -847,7 +845,7 @@
       const sprite = new THREE.Sprite(mat);
       sprite.visible = false;
       scene.add(sprite);
-      items.push({
+      const item = {
         sprite,
         mat,
         isFlake,
@@ -859,44 +857,67 @@
         maxLife: 1,
         spin: 0,
         baseScale: 0.4,
-      });
+      };
+      items.push(item);
+      return item;
+    }
+
+    // 两倍容量：连点时的爆发不会被完全耗尽；再不够时回收最旧的
+    for (let i = 0; i < CONFIG.burst.snowflakes * 2; i++) makeItem(true);
+    for (let i = 0; i < CONFIG.burst.sparks * 2; i++) makeItem(false);
+
+    function activate(it, origin) {
+      it.active = true;
+      it.sprite.visible = true;
+
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(Math.random() * 1.7 - 0.7);
+      const speed = it.isFlake ? 4.5 + Math.random() * 5.0 : 7.0 + Math.random() * 5.0;
+      const ux = Math.sin(phi) * Math.cos(theta);
+      const uy = Math.cos(phi);
+      const uz = Math.sin(phi) * Math.sin(theta);
+      it.vx = ux * speed;
+      it.vy = uy * speed + (it.isFlake ? 0.8 : 1.4);
+      it.vz = uz * speed;
+
+      const shell = 0.4 + Math.random() * 0.9;
+      it.sprite.position.set(
+        origin.x + ux * shell,
+        origin.y + uy * shell,
+        origin.z + uz * shell
+      );
+      it.maxLife = it.isFlake
+        ? CONFIG.burst.lifeMin + Math.random() * (CONFIG.burst.lifeMax - CONFIG.burst.lifeMin)
+        : 0.5 + Math.random() * 0.5;
+      it.life = it.maxLife;
+      it.spin = (Math.random() - 0.5) * 5;
+      it.baseScale = it.isFlake ? 0.8 + Math.random() * 0.7 : 0.4 + Math.random() * 0.4;
+
+      if (it.isFlake) it.mat.color.setHex(Math.random() < 0.35 ? 0x9fe8ff : 0xeffbff);
+      else it.mat.color.setHex(Math.random() < 0.5 ? 0x4fd1e8 : 0x8fcbff);
+      it.mat.opacity = 1;
+      it.sprite.material.rotation = Math.random() * Math.PI * 2;
+      it.sprite.scale.setScalar(it.baseScale);
+    }
+
+    function fill(isFlake, need, origin) {
+      const group = items.filter((it) => it.isFlake === isFlake);
+      const fresh = group.filter((it) => !it.active).slice(0, need);
+      for (const it of fresh) activate(it, origin);
+
+      const short = need - fresh.length;
+      if (short > 0) {
+        const recycled = group
+          .filter((it) => it.active && !fresh.includes(it))
+          .sort((a, b) => a.life - b.life)
+          .slice(0, short);
+        for (const it of recycled) activate(it, origin);
+      }
     }
 
     function spawn(origin) {
-      for (const it of items) {
-        if (it.active) continue;
-        it.active = true;
-        it.sprite.visible = true;
-
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos(Math.random() * 1.7 - 0.7);
-        const speed = it.isFlake ? 4.5 + Math.random() * 5.0 : 7.0 + Math.random() * 5.0;
-        const ux = Math.sin(phi) * Math.cos(theta);
-        const uy = Math.cos(phi);
-        const uz = Math.sin(phi) * Math.sin(theta);
-        it.vx = ux * speed;
-        it.vy = uy * speed + (it.isFlake ? 0.8 : 1.4);
-        it.vz = uz * speed;
-
-        const shell = 0.4 + Math.random() * 0.9;
-        it.sprite.position.set(
-          origin.x + ux * shell,
-          origin.y + uy * shell,
-          origin.z + uz * shell
-        );
-        it.maxLife = it.isFlake
-          ? CONFIG.burst.lifeMin + Math.random() * (CONFIG.burst.lifeMax - CONFIG.burst.lifeMin)
-          : 0.5 + Math.random() * 0.5;
-        it.life = it.maxLife;
-        it.spin = (Math.random() - 0.5) * 5;
-        it.baseScale = it.isFlake ? 0.8 + Math.random() * 0.7 : 0.4 + Math.random() * 0.4;
-
-        if (it.isFlake) it.mat.color.setHex(Math.random() < 0.35 ? 0x9fe8ff : 0xeffbff);
-        else it.mat.color.setHex(Math.random() < 0.5 ? 0x4fd1e8 : 0x8fcbff);
-        it.mat.opacity = 1;
-        it.sprite.material.rotation = Math.random() * Math.PI * 2;
-        it.sprite.scale.setScalar(it.baseScale);
-      }
+      fill(true, CONFIG.burst.snowflakes, origin);
+      fill(false, CONFIG.burst.sparks, origin);
     }
 
     function update(dt) {
@@ -928,13 +949,13 @@
   }
 
   // ── 泛光与最终合成 ──────────────────────────────────────
-  function createBloom() {
+  function createBloom(type) {
     const quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     const quadScene = new THREE.Scene();
     const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), null);
     quadScene.add(quad);
 
-    const rtOpts = { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter };
+    const rtOpts = { type, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter };
     const rtScene = new THREE.WebGLRenderTarget(1, 1, Object.assign({ depthBuffer: true }, rtOpts));
     const rtBright = new THREE.WebGLRenderTarget(1, 1, Object.assign({ depthBuffer: false }, rtOpts));
     const rtBlurA = new THREE.WebGLRenderTarget(1, 1, Object.assign({ depthBuffer: false }, rtOpts));
@@ -1285,15 +1306,27 @@
   let elapsed = 0;
   let tree, ornaments, star, ground, orbit;
   let aurora, stars, snow, bloom, burst;
+  let bloomType = 'off';
 
-  function computeFraming() {
-    const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+  function viewportSize() {
+    const vv = window.visualViewport;
+    return {
+      w: Math.max(1, Math.round(vv ? vv.width : window.innerWidth)),
+      h: Math.max(1, Math.round(vv ? vv.height : window.innerHeight)),
+    };
+  }
+
+  function computeFraming(w, h) {
+    const aspect = w / Math.max(1, h);
     const halfV = Math.tan(THREE.MathUtils.degToRad(CONFIG.camera.fov / 2));
     const fitW = (CONFIG.tree.radius * 1.16) / (halfV * aspect);
     const radius = Math.max(40, fitW) + (aspect > 1.8 ? 5 : 0);
     const targetY = aspect < 0.8 ? -2.2 : -1.2;
     return { radius, targetY };
   }
+
+  let framingWidth = 0;
+  let framingPortrait = null;
 
   function buildWorld() {
     const cores = navigator.hardwareConcurrency || 8;
@@ -1352,7 +1385,8 @@
     scene.background = new THREE.Color(CONFIG.colors.bg);
 
     const cam = CONFIG.camera;
-    const framing = computeFraming();
+    const vp = viewportSize();
+    const framing = computeFraming(vp.w, vp.h);
     cam.radius = framing.radius;
     cam.target = [0, framing.targetY, 0];
 
@@ -1368,14 +1402,30 @@
     clock = new THREE.Clock();
     buildWorld();
 
-    if ((navigator.hardwareConcurrency || 8) <= 4 || window.innerWidth < 500) {
-      CONFIG.bloom.resolution = 0.4;
+    const query = new URLSearchParams(location.search).get('bloom');
+    let choice = null;
+    if (query === 'off') choice = null;
+    else if (query === 'byte') choice = { type: THREE.UnsignedByteType, label: 'byte' };
+    else {
+      const gl = renderer.getContext();
+      const half = !!(gl.getExtension('EXT_color_buffer_half_float') || gl.getExtension('EXT_color_buffer_float'));
+      choice = half
+        ? { type: THREE.HalfFloatType, label: 'half' }
+        : { type: THREE.UnsignedByteType, label: 'byte' };
     }
-    try {
-      bloom = createBloom();
-    } catch (err) {
-      bloom = null;
-      console.warn('Bloom 不可用，回退到直接渲染：', err);
+
+    if (choice) {
+      if ((navigator.hardwareConcurrency || 8) <= 4 || window.innerWidth < 500) {
+        CONFIG.bloom.resolution = 0.4;
+      }
+      try {
+        bloom = createBloom(choice.type);
+        bloomType = choice.label;
+      } catch (err) {
+        bloom = null;
+        bloomType = 'off';
+        console.warn('Bloom 不可用，回退到直接渲染：', err);
+      }
     }
 
     resize();
@@ -1391,20 +1441,28 @@
 
   function resize() {
     if (!renderer || !camera) return;
-    const w = window.innerWidth;
-    const h = window.innerHeight;
+    const { w, h } = viewportSize();
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, CONFIG.dprCap));
     renderer.setSize(w, h, false);
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     if (tree) tree.uniforms.uPixelRatio.value = renderer.getPixelRatio();
     if (snow) snow.uniforms.uPixelRatio.value = renderer.getPixelRatio();
     if (stars) stars.uniforms.uPixelRatio.value = renderer.getPixelRatio();
     if (bloom) bloom.resize(w, h);
+
     if (orbit) {
-      const framing = computeFraming();
-      CONFIG.camera.radius = framing.radius;
-      orbit.target.set(0, framing.targetY, 0);
+      const portrait = w / h < 0.8;
+      // 只在宽度或横竖方向真正变化时重新取景；地址栏伸缩只改变可视高度，不跳画面
+      if (Math.abs(w - framingWidth) > 40 || framingPortrait === null || portrait !== framingPortrait) {
+        const framing = computeFraming(w, h);
+        CONFIG.camera.radius = framing.radius;
+        orbit.target.set(0, framing.targetY, 0);
+        framingWidth = w;
+        framingPortrait = portrait;
+      }
     }
   }
 
@@ -1458,6 +1516,7 @@
     get orbit() { return orbit; },
     get snow() { return snow; },
     get burst() { return burst; },
+    get bloomType() { return bloomType; },
     get bloom() { return bloom; },
     get scene() { return scene; },
     get camera() { return camera; },

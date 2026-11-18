@@ -144,6 +144,48 @@ try {
     if (r.result.value > 0) errors.push('drag produced a burst');
   }
 
+  if (process.env.MULTITAP) {
+    const n = Number(process.env.MULTITAP);
+    for (let i = 0; i < n; i++) {
+      await touch('touchStart', [{ x: 195, y: 420, radiusX: 2, radiusY: 2, force: 1, id: 1 + i }]);
+      await sleep(60);
+      await touch('touchEnd', []);
+      await sleep(200);
+    }
+    await sleep(400);
+    const r = await cdp.send('Runtime.evaluate', { expression: 'BCT.burst.activeCount()', returnByValue: true });
+    console.log(`burst active after ${n} taps:`, r.result.value);
+    if (r.result.value < 90) errors.push(`${n} rapid taps exhausted the burst pool (only ${r.result.value} active)`);
+  }
+
+  if (process.env.BLOOM_TEST === 'byte') {
+    const r = await cdp.send('Runtime.evaluate', { expression: 'window.BCT && BCT.bloomType', returnByValue: true });
+    console.log('bloom type:', r.result.value);
+    if (r.result.value !== 'byte') errors.push('forced byte bloom fallback is not active');
+  }
+
+  if (process.env.VIEWPORT_TEST === '1') {
+    const before = await cdp.send('Runtime.evaluate', { expression: 'BCT.CONFIG.camera.radius', returnByValue: true });
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: Number(w),
+      height: Number(h) - 90,
+      deviceScaleFactor: Number(dpr),
+      mobile: true,
+    });
+    await sleep(800);
+    const after = await cdp.send('Runtime.evaluate', {
+      expression: '({ radius: BCT.CONFIG.camera.radius, cw: document.getElementById("stage").clientWidth, ch: document.getElementById("stage").clientHeight })',
+      returnByValue: true,
+    });
+    console.log('viewport test:', JSON.stringify({ before: before.result.value, ...after.result.value }));
+    if (Math.abs(before.result.value - after.result.value.radius) > 0.5) {
+      errors.push('camera re-framed on a height-only viewport change');
+    }
+    if (after.result.value.ch !== Number(h) - 90) {
+      errors.push('canvas height does not follow the visual viewport');
+    }
+  }
+
   const layout = await cdp.send('Runtime.evaluate', {
     expression: `(() => {
       const rect = (sel) => { const el = document.querySelector(sel); if (!el) return null; const r = el.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; };
