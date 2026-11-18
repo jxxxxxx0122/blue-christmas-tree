@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#030814">
+<title>Blue Christmas Tree</title>
+<style>
+  :root { color-scheme: dark; --bg: #030814; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  body {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-font-smoothing: antialiased;
+  }
+  #stage {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    touch-action: none;
+    cursor: grab;
+  }
+  #stage.dragging { cursor: grabbing; }
+  #error {
+    display: none;
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    z-index: 10;
+    margin: 0;
+    padding: 12px 14px;
+    max-height: 45vh;
+    overflow: auto;
+    color: #ffb4b4;
+    background: rgba(60, 0, 0, 0.72);
+    border: 1px solid rgba(255, 120, 120, 0.4);
+    border-radius: 8px;
+    font: 12px/1.5 ui-monospace, Consolas, monospace;
+    white-space: pre-wrap;
+  }
+  #error.visible { display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage" role="img" aria-label="蓝色粒子圣诞树，可拖动旋转"></canvas>
+<pre id="error" aria-live="assertive"></pre>
+
+<script src="vendor/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // ── 配置 ────────────────────────────────────────────────
+  const CONFIG = {
+    colors: {
+      bg: 0x030814,
+      core: 0xdff6ff,
+      mid: 0x7cdfff,
+      deep: 0x1b5bff,
+      accent: 0x4fd1e8,
+    },
+    tree: { count: 2200, mobileCount: 1200, height: 20, radius: 7.2, baseY: -10 },
+    camera: { fov: 40, near: 0.1, far: 220, target: [0, 0.4, 0], radius: 30, pitch: 0.07 },
+    fogDensity: 0.018,
+    orbit: {
+      dragSpeed: 0.004,
+      pitchSpeed: 0.003,
+      minPitch: -0.14,
+      maxPitch: 0.49,
+      damping: 0.92,
+      autoRotate: 0.06,
+      idleAutoRotateAfterMs: 10000,
+    },
+    tap: { maxMove: 8, maxMs: 350, cooldownMs: 150 },
+    burst: { snowflakes: 48, sparks: 24, lifeMin: 1.2, lifeMax: 1.8 },
+    bloom: { threshold: 0.62, strength: 1.05, resolution: 0.5 },
+    dprCap: 2,
+    mobileWidth: 600,
+  };
+
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const coarsePointer = window.matchMedia('(pointer: coarse)').matches;
+  const DEMO = new URLSearchParams(location.search).get('demo');
+  const canvas = document.getElementById('stage');
+  const errorBox = document.getElementById('error');
+
+  // ── 错误可见化 ───────────────────────────────────────────
+  function reportError(message) {
+    errorBox.textContent += message + '\n';
+    errorBox.classList.add('visible');
+  }
+  window.addEventListener('error', (e) => {
+    reportError('[error] ' + (e.message || e.error || 'unknown'));
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    reportError('[promise] ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
+  });
+
+  // ── 渲染基础 ────────────────────────────────────────────
+  let renderer, scene, camera, clock;
+  let framesRendered = 0;
+
+  function init() {
+    if (!window.THREE) {
+      reportError('Three.js 未加载：请确认 vendor/three.min.js 存在。');
+      return;
+    }
+
+    try {
+      renderer = new THREE.WebGLRenderer({
+        canvas,
+        antialias: true,
+        powerPreference: 'high-performance',
+      });
+    } catch (err) {
+      reportError('当前浏览器不支持 WebGL，无法显示 3D 场景。');
+      return;
+    }
+
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, CONFIG.dprCap));
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.setClearColor(CONFIG.colors.bg, 1);
+
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(CONFIG.colors.bg);
+
+    const cam = CONFIG.camera;
+    camera = new THREE.PerspectiveCamera(cam.fov, window.innerWidth / window.innerHeight, cam.near, cam.far);
+    camera.position.set(0, 2.6, cam.radius);
+    camera.lookAt(cam.target[0], cam.target[1], cam.target[2]);
+
+    clock = new THREE.Clock();
+
+    resize();
+    window.addEventListener('resize', resize);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+
+    animate();
+  }
+
+  function resize() {
+    if (!renderer || !camera) return;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, CONFIG.dprCap));
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+    if (document.hidden) return;
+
+    const dt = Math.min(clock.getDelta(), 0.05);
+    renderer.render(scene, camera);
+
+    framesRendered++;
+    if (framesRendered === 3) {
+      window.SCENE_READY = true;
+      document.documentElement.dataset.ready = '1';
+    }
+  }
+
+  // 供后续任务使用的少量占位（避免接口空缺）
+  window.BCT = { CONFIG, DEMO, reducedMotion, coarsePointer };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>
