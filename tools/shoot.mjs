@@ -15,7 +15,7 @@ if (!out) {
 const CHROME = process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const port = 9300 + Math.floor(Math.random() * 500);
 const profile = mkdtempSync(join(tmpdir(), 'bct-chrome-'));
-const url = pathToFileURL(resolve('index.html')).href + suffix;
+const url = process.env.URL || (pathToFileURL(resolve('index.html')).href + suffix);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const proc = spawn(CHROME, [
