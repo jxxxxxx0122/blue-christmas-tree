@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 用无头 Chrome 渲染页面：截图 + 检查场景已启动 + 检查没有页面报错
-# 用法: tools/verify.sh <截图路径> [窗口尺寸] [URL 后缀，如 "?demo=click"]
+# 用法: tools/verify.sh <截图路径> [窗口尺寸] [URL 后缀] [虚拟时间毫秒]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -8,6 +8,7 @@ CHROME="${CHROME:-/c/Program Files/Google/Chrome/Application/chrome.exe}"
 OUT="${1:-$ROOT/artifacts/shot.png}"
 SIZE="${2:-390,844}"
 SUFFIX="${3:-}"
+BUDGET="${4:-6000}"
 mkdir -p "$(dirname "$OUT")" "$ROOT/artifacts"
 OUT="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
 
@@ -17,7 +18,7 @@ URL="file:///${ESCAPED}/index.html${SUFFIX}"
 
 COMMON=(--headless=new --use-angle=swiftshader --enable-unsafe-swiftshader --hide-scrollbars)
 
-"$CHROME" "${COMMON[@]}" --window-size="$SIZE" --virtual-time-budget=6000 \
+"$CHROME" "${COMMON[@]}" --window-size="$SIZE" --virtual-time-budget="$BUDGET" \
   --enable-logging=stderr --v=0 --screenshot="$OUT" "$URL" 2> "$ROOT/artifacts/chrome.log"
 
 if grep -E "CONSOLE.*(Uncaught|\[error\]|\[promise\])" "$ROOT/artifacts/chrome.log"; then
