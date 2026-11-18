@@ -105,9 +105,384 @@
     reportError('[promise] ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
   });
 
+  // ── 贴图工具 ───────────────────────────────────────────
+  function makeGlowTexture() {
+    const size = 128;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const ctx = cv.getContext('2d');
+    const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    g.addColorStop(0.0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.18, 'rgba(205,240,255,0.65)');
+    g.addColorStop(0.45, 'rgba(90,175,255,0.18)');
+    g.addColorStop(1.0, 'rgba(20,60,140,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  function makeFlareTexture() {
+    const size = 512;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const ctx = cv.getContext('2d');
+    const half = size / 2;
+
+    const halo = ctx.createRadialGradient(half, half, 0, half, half, half);
+    halo.addColorStop(0.0, 'rgba(255,255,255,1)');
+    halo.addColorStop(0.05, 'rgba(235,252,255,0.95)');
+    halo.addColorStop(0.16, 'rgba(140,215,255,0.35)');
+    halo.addColorStop(0.45, 'rgba(45,120,255,0.08)');
+    halo.addColorStop(1.0, 'rgba(0,0,0,0)');
+    ctx.fillStyle = halo;
+    ctx.fillRect(0, 0, size, size);
+
+    ctx.globalCompositeOperation = 'lighter';
+    const ray = (angle, length, width, alpha) => {
+      ctx.save();
+      ctx.translate(half, half);
+      ctx.rotate(angle);
+      const g = ctx.createLinearGradient(0, 0, 0, -length);
+      g.addColorStop(0.0, 'rgba(255,255,255,' + alpha + ')');
+      g.addColorStop(0.3, 'rgba(190,240,255,' + alpha * 0.45 + ')');
+      g.addColorStop(1.0, 'rgba(120,200,255,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(-width, 0);
+      ctx.lineTo(0, -length);
+      ctx.lineTo(width, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    };
+    ray(0, 245, 5.5, 0.95);
+    ray(Math.PI, 245, 5.5, 0.95);
+    ray(Math.PI / 2, 245, 5.5, 0.95);
+    ray(-Math.PI / 2, 245, 5.5, 0.95);
+    ray(Math.PI / 4, 105, 3.2, 0.55);
+    ray(-Math.PI / 4, 105, 3.2, 0.55);
+    ray((Math.PI * 3) / 4, 105, 3.2, 0.55);
+    ray((-Math.PI * 3) / 4, 105, 3.2, 0.55);
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  // ── 粒子树 ──────────────────────────────────────────────
+  function createTree(count) {
+    const { height, radius, baseY } = CONFIG.tree;
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const sizes = new Float32Array(count);
+    const phases = new Float32Array(count);
+    const cCore = new THREE.Color(CONFIG.colors.core);
+    const cMid = new THREE.Color(CONFIG.colors.mid);
+    const cDeep = new THREE.Color(CONFIG.colors.deep);
+    const cAccent = new THREE.Color(CONFIG.colors.accent);
+    const col = new THREE.Color();
+    const golden = Math.PI * (3 - Math.sqrt(5));
+
+    for (let i = 0; i < count; i++) {
+      const up = Math.random();                       // 0 底部 → 1 顶部
+      const y = baseY + height * up + (Math.random() - 0.5) * 0.28;
+      const coneR = radius * (1 - up);
+      const shell = Math.random() < 0.82 ? 0.9 + Math.random() * 0.1 : 0.35 + Math.random() * 0.45;
+      const r = coneR * shell;
+      const a = i * golden + up * 2.2;
+      positions[i * 3] = Math.cos(a) * r;
+      positions[i * 3 + 1] = y;
+      positions[i * 3 + 2] = Math.sin(a) * r;
+
+      if (up < 0.55) col.copy(cDeep).lerp(cMid, up / 0.55);
+      else col.copy(cMid).lerp(cCore, (up - 0.55) / 0.45);
+      if (Math.random() < 0.06) col.copy(cAccent);
+      col.multiplyScalar(0.75 + Math.random() * 0.55);
+      colors[i * 3] = col.r;
+      colors[i * 3 + 1] = col.g;
+      colors[i * 3 + 2] = col.b;
+
+      let s = 0.9 + Math.random() * 1.5;
+      if (Math.random() < 0.06) s *= 2.3;
+      sizes[i] = s;
+      phases[i] = Math.random();
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
+    geo.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+    geo.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1));
+
+    const uniforms = {
+      uTime: { value: 0 },
+      uPixelRatio: { value: renderer ? renderer.getPixelRatio() : 1 },
+      uFogDensity: { value: CONFIG.fogDensity },
+      uRippleOrigin: { value: new THREE.Vector3(0, 0, 0) },
+      uRippleTime: { value: -1 },
+      uDim: { value: 1 },
+    };
+
+    const material = new THREE.ShaderMaterial({
+      uniforms,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      vertexShader: `
+        uniform float uTime;
+        uniform float uPixelRatio;
+        uniform float uFogDensity;
+        uniform vec3 uRippleOrigin;
+        uniform float uRippleTime;
+        uniform float uDim;
+        attribute vec3 aColor;
+        attribute float aSize;
+        attribute float aPhase;
+        varying vec3 vColor;
+        varying float vAlpha;
+
+        void main() {
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          float twinkle = 0.7 + 0.3 * sin(uTime * 1.5 + aPhase * 6.28318);
+          float ring = 0.0;
+          if (uRippleTime >= 0.0) {
+            float d = distance(position, uRippleOrigin);
+            float wave = uRippleTime * 9.0;
+            ring = exp(-pow((d - wave) * 1.15, 2.0)) * max(0.0, 1.0 - uRippleTime * 0.55);
+          }
+          float fog = exp(-uFogDensity * uFogDensity * mv.z * mv.z);
+          vColor = aColor * (0.62 + 0.55 * twinkle) + vec3(0.45, 0.8, 1.0) * ring * 1.7;
+          vColor *= fog * uDim;
+          vAlpha = 0.55 + 0.45 * twinkle;
+          gl_PointSize = aSize * uPixelRatio * (118.0 / max(-mv.z, 0.001));
+          gl_Position = projectionMatrix * mv;
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vColor;
+        varying float vAlpha;
+        void main() {
+          vec2 p = gl_PointCoord - 0.5;
+          float d = length(p) * 2.0;
+          float a = smoothstep(1.0, 0.0, d);
+          a *= a;
+          gl_FragColor = vec4(vColor, a * vAlpha);
+        }
+      `,
+    });
+
+    const group = new THREE.Group();
+    const points = new THREE.Points(geo, material);
+    group.add(points);
+
+    function triggerRipple(worldPos) {
+      group.updateMatrixWorld(true);
+      const local = group.worldToLocal(worldPos.clone());
+      uniforms.uRippleOrigin.value.copy(local);
+      uniforms.uRippleTime.value = 0;
+    }
+
+    return { group, uniforms, triggerRipple };
+  }
+
+  // ── 挂饰 ────────────────────────────────────────────────
+  function createOrnaments() {
+    const { height, radius, baseY } = CONFIG.tree;
+    const group = new THREE.Group();
+    const glow = makeGlowTexture();
+    const geo = new THREE.SphereGeometry(1, 12, 12);
+    const palette = [CONFIG.colors.core, CONFIG.colors.accent, CONFIG.colors.mid];
+    const materials = palette.map((c) => new THREE.MeshBasicMaterial({ color: c, fog: false }));
+    const haloMaterial = new THREE.SpriteMaterial({
+      map: glow,
+      color: CONFIG.colors.mid,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      fog: false,
+    });
+    const items = [];
+
+    for (let i = 0; i < 30; i++) {
+      const up = 0.06 + Math.random() * 0.86;
+      const a = Math.random() * Math.PI * 2;
+      const r = radius * (1 - up) * 1.01;
+      const y = baseY + height * up;
+      const scale = 0.09 + Math.random() * 0.1;
+
+      const mesh = new THREE.Mesh(geo, materials[i % materials.length]);
+      mesh.position.set(Math.cos(a) * r, y, Math.sin(a) * r);
+      mesh.scale.setScalar(scale);
+      group.add(mesh);
+
+      const halo = new THREE.Sprite(haloMaterial);
+      halo.position.copy(mesh.position);
+      halo.scale.setScalar(scale * (9 + Math.random() * 4));
+      group.add(halo);
+
+      items.push({
+        mesh,
+        halo,
+        baseY: y,
+        phase: Math.random() * 6.28,
+        pulse: 0,
+        baseScale: scale,
+        baseHalo: scale * (9 + Math.random() * 4),
+      });
+    }
+
+    return {
+      group,
+      items,
+      update(t, dt) {
+        for (const it of items) {
+          it.mesh.position.y = it.baseY + Math.sin(t * 0.6 + it.phase) * 0.16;
+          it.halo.position.y = it.mesh.position.y;
+          if (it.pulse > 0) {
+            it.pulse = Math.max(0, it.pulse - dt / 0.8);
+            const k = 1 + 0.9 * it.pulse;
+            it.mesh.scale.setScalar(it.baseScale * k);
+            it.halo.scale.setScalar(it.baseHalo * k);
+          }
+        }
+      },
+      pulse(worldPos) {
+        for (const it of items) {
+          if (it.mesh.position.distanceTo(worldPos) < 3.2) it.pulse = 1;
+        }
+      },
+    };
+  }
+
+  // ── 树顶星 ──────────────────────────────────────────────
+  function createStar() {
+    const group = new THREE.Group();
+    group.position.set(0, CONFIG.tree.baseY + CONFIG.tree.height + 0.7, 0);
+    const flare = makeFlareTexture();
+
+    const core = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.55, 0),
+      new THREE.MeshBasicMaterial({ color: 0xf2fdff, fog: false })
+    );
+    group.add(core);
+
+    const flareSprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: flare,
+        color: 0xdff6ff,
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        fog: false,
+      })
+    );
+    flareSprite.scale.setScalar(8);
+    group.add(flareSprite);
+
+    const halo = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: makeGlowTexture(),
+        color: 0xbfefff,
+        transparent: true,
+        opacity: 0.8,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        fog: false,
+      })
+    );
+    halo.scale.setScalar(3.4);
+    group.add(halo);
+
+    let flashT = -1;
+    return {
+      group,
+      flash() { flashT = 0; },
+      update(t, dt) {
+        const breathe = 1 + 0.06 * Math.sin(t * 1.2);
+        let boost = 1;
+        if (flashT >= 0) {
+          flashT += dt;
+          boost = 1 + Math.max(0, 1 - flashT / 0.25) * 1.5;
+          if (flashT > 0.3) flashT = -1;
+        }
+        flareSprite.scale.setScalar(8 * breathe * boost);
+        halo.scale.setScalar(3.4 * breathe * (1 + (boost - 1) * 0.5));
+        core.rotation.y = t * 0.4;
+        core.rotation.x = Math.sin(t * 0.3) * 0.25;
+      },
+    };
+  }
+
+  // ── 地面光池 ────────────────────────────────────────────
+  function createGround() {
+    const geo = new THREE.CircleGeometry(22, 64);
+    geo.rotateX(-Math.PI / 2);
+    const mat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        uColor: { value: new THREE.Color(0x1b5bff) },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uColor;
+        varying vec2 vUv;
+        void main() {
+          float d = length(vUv - 0.5) * 2.0;
+          float a = smoothstep(1.0, 0.0, d);
+          a = pow(a, 2.6);
+          gl_FragColor = vec4(uColor * (0.45 + 0.55 * a), a * 0.5);
+        }
+      `,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.y = CONFIG.tree.baseY - 0.12;
+    return { mesh, mat };
+  }
+
   // ── 渲染基础 ────────────────────────────────────────────
   let renderer, scene, camera, clock;
   let framesRendered = 0;
+  let elapsed = 0;
+  let tree, ornaments, star, ground;
+
+  function computeFraming() {
+    const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+    const halfV = Math.tan(THREE.MathUtils.degToRad(CONFIG.camera.fov / 2));
+    const fitW = (CONFIG.tree.radius * 1.16) / (halfV * aspect);
+    const radius = Math.max(40, fitW);
+    const targetY = aspect < 0.8 ? -2.2 : -1.2;
+    return { radius, targetY };
+  }
+
+  function buildWorld() {
+    const cores = navigator.hardwareConcurrency || 8;
+    const small = window.innerWidth < CONFIG.mobileWidth || coarsePointer;
+    let count = small ? CONFIG.tree.mobileCount : CONFIG.tree.count;
+    if (cores <= 4) count = Math.round(count * 0.75);
+
+    scene.fog = new THREE.FogExp2(CONFIG.colors.bg, CONFIG.fogDensity);
+
+    tree = createTree(count);
+    scene.add(tree.group);
+    ornaments = createOrnaments();
+    scene.add(ornaments.group);
+    star = createStar();
+    scene.add(star.group);
+    ground = createGround();
+    scene.add(ground.mesh);
+  }
 
   function init() {
     if (!window.THREE) {
@@ -136,11 +511,21 @@
     scene.background = new THREE.Color(CONFIG.colors.bg);
 
     const cam = CONFIG.camera;
+    const framing = computeFraming();
+    cam.radius = framing.radius;
+    cam.target = [0, framing.targetY, 0];
+
     camera = new THREE.PerspectiveCamera(cam.fov, window.innerWidth / window.innerHeight, cam.near, cam.far);
-    camera.position.set(0, 2.6, cam.radius);
+    const pitch = CONFIG.camera.pitch;
+    camera.position.set(
+      cam.target[0],
+      cam.target[1] + Math.sin(pitch) * cam.radius,
+      Math.cos(pitch) * cam.radius
+    );
     camera.lookAt(cam.target[0], cam.target[1], cam.target[2]);
 
     clock = new THREE.Clock();
+    buildWorld();
 
     resize();
     window.addEventListener('resize', resize);
@@ -157,6 +542,7 @@
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    if (tree) tree.uniforms.uPixelRatio.value = renderer.getPixelRatio();
   }
 
   function animate() {
@@ -164,6 +550,18 @@
     if (document.hidden) return;
 
     const dt = Math.min(clock.getDelta(), 0.05);
+    elapsed += dt;
+
+    if (tree) {
+      tree.uniforms.uTime.value = elapsed;
+      if (tree.uniforms.uRippleTime.value >= 0) {
+        tree.uniforms.uRippleTime.value += dt;
+        if (tree.uniforms.uRippleTime.value > 2.4) tree.uniforms.uRippleTime.value = -1;
+      }
+    }
+    if (ornaments) ornaments.update(elapsed, dt);
+    if (star) star.update(elapsed, dt);
+
     renderer.render(scene, camera);
 
     framesRendered++;
@@ -173,8 +571,18 @@
     }
   }
 
-  // 供后续任务使用的少量占位（避免接口空缺）
-  window.BCT = { CONFIG, DEMO, reducedMotion, coarsePointer };
+  // 供后续任务与调试使用
+  window.BCT = {
+    CONFIG,
+    DEMO,
+    reducedMotion,
+    coarsePointer,
+    get tree() { return tree; },
+    get ornaments() { return ornaments; },
+    get star() { return star; },
+    get scene() { return scene; },
+    get camera() { return camera; },
+  };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
